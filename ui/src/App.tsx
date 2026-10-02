@@ -249,9 +249,88 @@ function Detail({ tab, id, onClose, onAuthFail }: { tab: Tab; id: number; onClos
   );
 }
 
+// ── services strip ────────────────────────────────────────────────────────────
+
+function Services({ admin, onAuthFail }: { admin: boolean; onAuthFail: () => void }) {
+  const [units, refresh] = usePoll<Row[]>("/api/services", onAuthFail, 5000);
+  const [open, setOpen] = useState<string | null>(null);
+  const [log] = usePoll<{ log: string[] }>(open ? `/api/services/${open}/log` : null, onAuthFail, 5000);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const restart = async (unit: string, verb: string) => {
+    if (!confirm(`${verb} ${unit}? This is logged and mailed.`)) return;
+    setBusy(true);
+    setMsg("");
+    try {
+      await api(`/api/services/${unit}/restart`, { method: "POST" });
+      setMsg(`${unit}: ${verb.toLowerCase()} done.`);
+      refresh();
+    } catch (e: any) {
+      if (e instanceof Unauthorized) onAuthFail();
+      else setMsg(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const current = units?.find((u) => u.name === open);
+
+  return (
+    <section className="services">
+      <div className="service-pills">
+        <span className="muted">Services</span>
+        {(units || []).map((u) => (
+          <button
+            key={u.name}
+            className={`service ${u.state} ${open === u.name ? "on" : ""}`}
+            onClick={() => {
+              setOpen(open === u.name ? null : u.name);
+              setMsg("");
+            }}
+            title={u.since ? `${u.state} since ${u.since}, restarts: ${u.restarts}` : u.state}
+          >
+            <i className="dot" aria-hidden /> {u.name} <span className="muted">{u.state}</span>
+          </button>
+        ))}
+      </div>
+      {current && (
+        <div className="service-detail">
+          <div className="service-head">
+            <b>{current.name}</b>
+            <span className="muted">
+              {current.state}
+              {current.sub && ` (${current.sub})`}
+              {current.since && ` since ${current.since}`}
+              {current.restarts !== "" && current.restarts != null && ` · restarts ${current.restarts}`}
+            </span>
+            {admin && (
+              <button onClick={() => restart(current.name, current.state === "active" ? "Restart" : "Start")} disabled={busy}>
+                {busy ? "Working…" : current.state === "active" ? "Restart" : "Start"}
+              </button>
+            )}
+          </div>
+          {msg && <p className="msg">{msg}</p>}
+          <pre className="log">{log?.log?.length ? log.log.join("\n") : "No journal lines."}</pre>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ── dashboard ─────────────────────────────────────────────────────────────────
 
-function Dashboard({ name, onLogout, onAuthFail }: { name: string; onLogout: () => void; onAuthFail: () => void }) {
+function Dashboard({
+  name,
+  admin,
+  onLogout,
+  onAuthFail,
+}: {
+  name: string;
+  admin: boolean;
+  onLogout: () => void;
+  onAuthFail: () => void;
+}) {
   const [tab, setTab] = useState<Tab>("ingest");
   const [status, setStatus] = useState("");
   const [project, setProject] = useState("");
@@ -265,7 +344,24 @@ function Dashboard({ name, onLogout, onAuthFail }: { name: string; onLogout: () 
     if (project) qs.set("project", project);
     if (q) qs.set("q", q);
   }
-  const [rows] = usePoll<Row[]>(`/api/${tab}?${qs}`, onAuthFail);
+  const [rows, refreshRows] = usePoll<Row[]>(`/api/${tab}?${qs}`, onAuthFail);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [rowMsg, setRowMsg] = useState<{ id: number; text: string } | null>(null);
+
+  const retryRow = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation(); // don't open the side panel
+    setBusyId(id);
+    setRowMsg(null);
+    try {
+      await api(`/api/${tab}/${id}/retry`, { method: "POST" });
+      refreshRows();
+    } catch (err: any) {
+      if (err instanceof Unauthorized) onAuthFail();
+      else setRowMsg({ id, text: err.message });
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   // packages endpoint returns recent rows; filter those client-side
   const shown = (rows || []).filter(
@@ -286,6 +382,7 @@ function Dashboard({ name, onLogout, onAuthFail }: { name: string; onLogout: () 
     setTab(t);
     setStatus("");
     setSelected(null);
+    setRowMsg(null);
   };
 
   return (
@@ -307,6 +404,8 @@ function Dashboard({ name, onLogout, onAuthFail }: { name: string; onLogout: () 
           </button>
         </span>
       </header>
+
+      <Services admin={admin} onAuthFail={onAuthFail} />
 
       <section className="chips">
         <button className={status === "" ? "chip on" : "chip"} onClick={() => setStatus("")}>
@@ -342,6 +441,7 @@ function Dashboard({ name, onLogout, onAuthFail }: { name: string; onLogout: () 
                 <th>Status</th>
                 <th>Updated</th>
                 <th>Error</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -362,12 +462,21 @@ function Dashboard({ name, onLogout, onAuthFail }: { name: string; onLogout: () 
                   <td title={String(r.updated_at ?? r.finished_at ?? r.claimed_at ?? r.created_at)}>
                     {age(r.updated_at ?? r.finished_at ?? r.claimed_at ?? r.created_at)}
                   </td>
-                  <td className="err">{r.status === "failed" ? r.error_message || r.result : ""}</td>
+                  <td className="err" title={rowMsg && rowMsg.id === r.id ? rowMsg.text : undefined}>
+                    {rowMsg && rowMsg.id === r.id ? `Retry refused: ${rowMsg.text}` : r.status === "failed" ? r.error_message || r.result : ""}
+                  </td>
+                  <td>
+                    {r.status === "failed" && (
+                      <button className="row-retry" onClick={(e) => retryRow(e, r.id)} disabled={busyId === r.id}>
+                        {busyId === r.id ? "…" : "Retry"}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
               {rows && shown.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="empty">
+                  <td colSpan={8} className="empty">
                     No jobs match.
                   </td>
                 </tr>
@@ -382,7 +491,7 @@ function Dashboard({ name, onLogout, onAuthFail }: { name: string; onLogout: () 
 }
 
 export default function App() {
-  const [me, setMe] = useState<{ user: string; name: string } | null | undefined>(undefined);
+  const [me, setMe] = useState<{ user: string; name: string; admin: boolean } | null | undefined>(undefined);
 
   const check = useCallback(() => {
     api("/api/me")
@@ -396,6 +505,7 @@ export default function App() {
   return (
     <Dashboard
       name={me.name}
+      admin={me.admin}
       onAuthFail={() => setMe(null)}
       onLogout={() => api("/api/logout", { method: "POST" }).finally(() => setMe(null))}
     />

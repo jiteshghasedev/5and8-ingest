@@ -221,3 +221,5 @@ __marimo__/
 ui/node_modules/
 # built UI is committed: the server has no Node (overrides dist/ above)
 !ui/dist/
+# central private config — never commit
+.ingest-web*.yaml

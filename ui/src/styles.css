@@ -109,6 +109,20 @@ tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--bg); }
 tbody tr.sel { background: var(--run-bg); }
 td.err { color: var(--bad); max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+/* services strip */
+.services { margin-bottom: 12px; }
+.service-pills { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.service { background: var(--surface); border-color: var(--border); color: var(--text); border-radius: 999px; padding: 3px 12px; font-size: 13px; }
+.service.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.service .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 2px; }
+.service.active .dot { background: var(--ok); }
+.service.failed .dot, .service.inactive .dot, .service.not-installed .dot { background: var(--bad); }
+.service.activating .dot, .service.deactivating .dot, .service.reloading .dot { background: var(--pending); }
+.service-detail { margin-top: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+.service-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.service-head button { margin-left: auto; }
+
+.row-retry { padding: 2px 10px; font-size: 12px; }
 td.empty { text-align: center; color: var(--muted); padding: 28px; }
 
 /* status */

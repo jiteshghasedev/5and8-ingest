@@ -12,8 +12,8 @@ Environment=INGEST_CONFIG=/software/pipeline/vfx-ingest-pipeline/config/ingest.y
 Environment=PACKAGE_QUEUE_DB=/software/pipeline/queue/delivery/package_queue.db
 Environment=PIPELINE_LOG_DIR=/software/pipeline/queue/delivery/logs
 Environment=SHOTDECK_ROOT=/software/pipeline/sgdesk/sgdesk
-# WEB_SECRET=<long random string>, mode 600, owned by sgd
-EnvironmentFile=/etc/vfx-ingest/web.env
+# Central private config (secret, admins, logins, mail, daemon host). Mode 600, owner sgd.
+Environment=WEB_CONFIG=/etc/vfx-ingest/.ingest-web.yaml
 ExecStart=/software/pipeline/vfx-ingest-pipeline/ingest_venv/bin/python -m uvicorn api:app \
           --host 0.0.0.0 --port 8443 \
           --ssl-keyfile /etc/vfx-ingest/tls/key.pem \
