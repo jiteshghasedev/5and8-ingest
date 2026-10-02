@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Dashboard
+ui/node_modules/
+# built UI is committed: the server has no Node (overrides dist/ above)
+!ui/dist/

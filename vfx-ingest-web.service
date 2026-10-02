@@ -1,0 +1,27 @@
+[Unit]
+Description=VFX Ingest Pipeline — Status Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=sgd
+Group=ai-users
+WorkingDirectory=/software/pipeline/5and8-ingest
+Environment=PIPELINE_ROOT=/software/pipeline/vfx-ingest-pipeline
+Environment=INGEST_CONFIG=/software/pipeline/vfx-ingest-pipeline/config/ingest.yaml
+Environment=PACKAGE_QUEUE_DB=/software/pipeline/queue/delivery/package_queue.db
+Environment=PIPELINE_LOG_DIR=/software/pipeline/queue/delivery/logs
+Environment=SHOTDECK_ROOT=/software/pipeline/sgdesk/sgdesk
+# WEB_SECRET=<long random string>, mode 600, owned by sgd
+EnvironmentFile=/etc/vfx-ingest/web.env
+ExecStart=/software/pipeline/vfx-ingest-pipeline/ingest_venv/bin/python -m uvicorn api:app \
+          --host 0.0.0.0 --port 8443 \
+          --ssl-keyfile /etc/vfx-ingest/tls/key.pem \
+          --ssl-certfile /etc/vfx-ingest/tls/cert.pem
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
