@@ -95,6 +95,9 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
 
 .filters { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .filters input { flex: 1; min-width: 160px; max-width: 320px; }
+.filters input.date { flex: 0 0 auto; min-width: 0; }
+.filters .export { margin-left: auto; }
+.note { margin: -4px 0 12px; font-size: 0.9em; }
 
 main { display: grid; grid-template-columns: 1fr; gap: 16px; }
 main.with-panel { grid-template-columns: minmax(0, 1fr) 420px; }

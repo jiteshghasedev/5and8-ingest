@@ -6,6 +6,9 @@ failed jobs. Ingest is still started by the watcher/daemon, never from here.
 
 - `api.py`: FastAPI. Reads the queues through the `vfx-ingest-pipeline`
   checkout at `PIPELINE_ROOT` (`core/queue_manager.py`, `tools/package_queue.py`).
+- `web_queue.py`: everything the dashboard adds on top of the pipeline's queue
+  code (list/stats, retry/edit of failed jobs, `audit` table). The pipeline
+  repo carries no web code. Self-check: `PIPELINE_ROOT=... python test_web_queue.py`.
 - `ui/`: React + Vite. `ui/dist` is the built app that `api.py` serves.
 - Login is Active Directory via ShotDeck's `auth` package (`SHOTDECK_ROOT`).
 
@@ -79,6 +82,6 @@ default `smtp01.5and8.net:55`).
 ## Local dev
 
 ```bash
-PIPELINE_ROOT=D:/dev/5and8live/vfx-ingest-pipeline INGEST_CONFIG=... WEB_CONFIG=D:/somewhere/.ingest-web.yaml uvicorn api:app --port 8000
+PIPELINE_ROOT=D:/dev/5and8/vfx-ingest-pipeline INGEST_CONFIG=... WEB_CONFIG=D:/somewhere/.ingest-web.yaml uvicorn api:app --port 8000
 cd ui && npm run dev        # proxies /api to :8000
 ```

@@ -60,6 +60,36 @@ function age(v: string | number | null): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
+// Created-date filter -> [since, until) in epoch seconds, on the viewer's local days
+type Range = "" | "today" | "yesterday" | "7d" | "30d" | "custom";
+
+function dateBounds(range: Range, from: string, to: string): [number?, number?] {
+  const sec = (d: Date) => Math.floor(d.getTime() / 1000);
+  const daysAgo = (n: number) => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - n);
+    return d;
+  };
+  switch (range) {
+    case "today":
+      return [sec(daysAgo(0))];
+    case "yesterday":
+      return [sec(daysAgo(1)), sec(daysAgo(0))];
+    case "7d":
+      return [sec(daysAgo(6))];
+    case "30d":
+      return [sec(daysAgo(29))];
+    case "custom": {
+      const end = to ? new Date(`${to}T00:00`) : null;
+      end?.setDate(end.getDate() + 1); // "to" day is inclusive
+      return [from ? sec(new Date(`${from}T00:00`)) : undefined, end ? sec(end) : undefined];
+    }
+    default:
+      return [];
+  }
+}
+
 function Badge({ status }: { status: string }) {
   return <span className={`badge ${status}`}>{status}</span>;
 }
@@ -335,15 +365,19 @@ function Dashboard({
   const [status, setStatus] = useState("");
   const [project, setProject] = useState("");
   const [q, setQ] = useState("");
+  const [range, setRange] = useState<Range>("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
 
   const [summary] = usePoll<{ ingest: Record<string, number>; packages: Record<string, number> }>("/api/summary", onAuthFail);
   const qs = new URLSearchParams();
-  if (tab === "ingest") {
-    if (status) qs.set("status", status);
-    if (project) qs.set("project", project);
-    if (q) qs.set("q", q);
-  }
+  if (status) qs.set("status", status);
+  if (project) qs.set("project", project);
+  if (q) qs.set("q", q);
+  const [since, until] = dateBounds(range, from, to);
+  if (since != null) qs.set("since", String(since));
+  if (until != null) qs.set("until", String(until));
   const [rows, refreshRows] = usePoll<Row[]>(`/api/${tab}?${qs}`, onAuthFail);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [rowMsg, setRowMsg] = useState<{ id: number; text: string } | null>(null);
@@ -363,14 +397,16 @@ function Dashboard({
     }
   };
 
-  // packages endpoint returns recent rows; filter those client-side
-  const shown = (rows || []).filter(
-    (r) =>
-      tab === "ingest" ||
-      ((!status || r.status === status) &&
-        (!project || r.project === project) &&
-        (!q || `${r.shot} ${r.task || ""}`.toLowerCase().includes(q.toLowerCase()))),
-  );
+  const shown = rows || [];
+  const filtered = !!(status || project || q || range);
+  const clearFilters = () => {
+    setStatus("");
+    setProject("");
+    setQ("");
+    setRange("");
+    setFrom("");
+    setTo("");
+  };
   const projects = Array.from(new Set((rows || []).map((r) => r.project))).sort();
   const counts = summary?.[tab] || {};
   const statuses =
@@ -426,7 +462,30 @@ function Dashboard({
           ))}
         </select>
         <input placeholder="Search shot…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <select value={range} onChange={(e) => setRange(e.target.value as Range)} aria-label="Created">
+          <option value="">Created: any time</option>
+          <option value="today">Created today</option>
+          <option value="yesterday">Created yesterday</option>
+          <option value="7d">Created last 7 days</option>
+          <option value="30d">Created last 30 days</option>
+          <option value="custom">Created between…</option>
+        </select>
+        {range === "custom" && (
+          <>
+            <input type="date" className="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} aria-label="From" />
+            <input type="date" className="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} aria-label="To" />
+          </>
+        )}
+        {filtered && (
+          <button className="ghost" onClick={clearFilters}>
+            Clear filters
+          </button>
+        )}
+        <button className="secondary export" onClick={() => (window.location.href = `/api/export/${tab}?${qs}`)}>
+          Export CSV
+        </button>
       </section>
+      {shown.length >= 500 && <p className="muted note">Showing the newest 500. Export CSV includes every matching job.</p>}
 
       <main className={selected ? "with-panel" : ""}>
         <div className="table-wrap">

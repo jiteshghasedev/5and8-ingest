@@ -5,7 +5,7 @@ Read-mostly view over the two SQLite queues. Ingest is still started by the
 watcher and packaging by the `pkg` status in ShotGrid; this only shows status
 and lets IO/production retry or correct a failed job.
 
-Queue code (core/, tools/package_queue.py) is imported from the
+Pipeline code (core/, tools/package_queue.py) is imported unchanged from the
 vfx-ingest-pipeline checkout at PIPELINE_ROOT, so there is one copy of it.
 
     PIPELINE_ROOT=/software/pipeline/vfx-ingest-pipeline \
@@ -27,18 +27,20 @@ with a fixed list of logins. Remove them once AD login works.
 
 from __future__ import annotations
 
+import csv
 import hmac
+import io
 import os
 import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
 import yaml
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
@@ -49,13 +51,13 @@ sys.path.insert(0, str(PIPELINE_ROOT / "tools"))
 
 from core.config import load_config                 # noqa: E402
 from core.db import DatabaseManager                 # noqa: E402
-from core.queue_manager import QueueManager         # noqa: E402
+from web_queue import WebQueue, package_list, package_reset  # noqa: E402
 import package_queue as pq                          # noqa: E402
 
 cfg = load_config()
 db = DatabaseManager(cfg["paths"]["sqlite_db_path"])
 db.init_db()
-queue = QueueManager(db)
+queue = WebQueue(db)
 LOG_DIR = Path(cfg["paths"]["log_path"])
 PKG_LOG = Path(os.environ.get("PIPELINE_LOG_DIR", "/var/log/vfx-pipeline")) / "package_worker.log"
 
@@ -157,9 +159,10 @@ def summary(_: str = Depends(current_user)):
 
 
 @app.get("/api/ingest")
-def ingest_list(status: str | None = None, project: str | None = None,
-                q: str | None = None, _: str = Depends(current_user)):
-    return queue.list_jobs(status=status, project=project, q=q)
+def ingest_list(status: str | None = None, project: str | None = None, q: str | None = None,
+                since: float | None = None, until: float | None = None,
+                _: str = Depends(current_user)):
+    return queue.list_jobs(status=status, project=project, q=q, since=since, until=until)
 
 
 @app.get("/api/ingest/{job_id}")
@@ -180,8 +183,53 @@ def ingest_detail(job_id: int, _: str = Depends(current_user)):
 
 
 @app.get("/api/packages")
-def package_list(_: str = Depends(current_user)):
-    return [dict(r) for r in pq.recent(500)]
+def packages(status: str | None = None, project: str | None = None, q: str | None = None,
+             since: float | None = None, until: float | None = None,
+             _: str = Depends(current_user)):
+    return package_list(status=status, project=project, q=q, since=since, until=until)
+
+
+def _local_time(v) -> str:
+    """Ingest rows hold UTC text, package rows epoch seconds; CSV gets server local time."""
+    if v in (None, ""):
+        return ""
+    if isinstance(v, (int, float)):
+        d = datetime.fromtimestamp(v, timezone.utc)
+    else:
+        d = datetime.fromisoformat(str(v)).replace(tzinfo=timezone.utc)
+    return d.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _cell(v) -> str:
+    # Excel runs cells starting with these as formulas; file names come from vendors
+    s = "" if v is None else str(v)
+    return "'" + s if s[:1] in ("=", "+", "-", "@") else s
+
+
+@app.get("/api/export/{kind}")
+def export_csv(kind: str, status: str | None = None, project: str | None = None,
+               q: str | None = None, since: float | None = None, until: float | None = None,
+               _: str = Depends(current_user)):
+    """Every row matching the dashboard filters (no 500 cap), as CSV for Excel."""
+    args = dict(status=status, project=project, q=q, since=since, until=until, limit=None)
+    if kind == "ingest":
+        rows = queue.list_jobs(**args)
+        times = ("created_at", "updated_at")
+    elif kind == "packages":
+        rows = package_list(**args)
+        times = ("created_at", "claimed_at", "finished_at")
+    else:
+        raise HTTPException(404, "unknown export")
+    cols = list(rows[0]) if rows else ["id"]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(cols)
+    for r in rows:
+        w.writerow([_local_time(r[c]) if c in times else _cell(r[c]) for c in cols])
+    name = f"{kind}_{datetime.now():%Y%m%d_%H%M}.csv"
+    # BOM so Excel reads UTF-8
+    return Response("\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.get("/api/packages/{job_id}")
@@ -373,7 +421,7 @@ def ingest_edit(job_id: int, body: IngestEdit, user: str = Depends(current_user)
 
 @app.post("/api/packages/{job_id}/retry")
 def package_retry(job_id: int, user: str = Depends(current_user)):
-    if not pq.reset(job_id):
+    if not package_reset(job_id):
         raise HTTPException(
             409, "only failed jobs can be retried, and not while the same shot has a live job")
     queue.audit(user, "package", job_id, "retry")
